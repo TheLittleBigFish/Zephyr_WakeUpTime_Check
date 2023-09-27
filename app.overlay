@@ -10,6 +10,14 @@
 };
 */
 
+/ {
+    mosfet: mosfet_switch {
+		compatible = "mosfet-switch";
+		gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+
 &spi1 {
     compatible = "nordic,nrf-spi";
     status = "okay";

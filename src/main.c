@@ -13,7 +13,7 @@
 // For prints and Logs
 #include <zephyr/sys/printk.h>
 #include <zephyr/logging/log.h>
-// For GPIO
+// For GPIO and interrupt
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/util.h>
 
@@ -64,6 +64,24 @@ char checkDivice(const struct device *dev) {
 	return 1;
 }
 
+char configGPIO(const struct gpio_dt_spec *gpio_spec, uint32_t gpio_type) {
+	int err;
+
+	if (!gpio_is_ready_dt(gpio_spec)) {
+		printf("The load switch pin GPIO port is not ready.\n");
+		return 0;
+	}
+
+	err = gpio_pin_configure_dt(gpio_spec, gpio_type);
+	if (err != 0) {
+		printk("Error %d: failed to configure %s pin %d\n", err, gpio_spec->port->name, gpio_spec->pin);
+		return 0;
+	}
+
+	return 1;
+}
+
+
 /** 
  * @fn void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
  * @brief Callback function for the interrupt resolted from pressing 
@@ -80,7 +98,8 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t
 
 int main(void) {
 	LOG_INF("Hello World! %s\n", CONFIG_BOARD);
-
+	// ---------------------------------- SPI --------------------------------------------------
+	// Variable with the bme280 SPI device specs
 	struct spi_dt_spec spec_bme = SPI_DT_SPEC_GET(DT_NODELABEL(spi_bme280), 
 			(SPI_TRANSFER_MSB | SPI_MODE_CPOL | SPI_MODE_CPHA | 
 			SPI_WORD_SET(8) | SPI_LINES_SINGLE), 0);
@@ -89,22 +108,30 @@ int main(void) {
 		return 0;
 	}
 
+	// Buffers used in SPI
+	uint8_t addr;
+	struct spi_buf tx_buf = {.buf = &addr, .len = 1};
+	struct spi_buf_set tx = {.buffers = &tx_buf, .count = 1};
+
+	uint8_t buf[2];
+	struct spi_buf rx_buf[2] = {{.buf=&buf[0],.len=1},{.buf=&buf[1],.len=1}};
+	struct spi_buf_set rx = {.buffers = &rx_buf, .count = ARRAY_SIZE(rx_buf)};
+
+	addr = 0xD0 | 0x80; //| 0x80;
+
+	// ---------------------------------- Interrupt ----------------------------------------------
+	// Variable with the nrf52 button 1 device specs
 	static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {0});
 	static struct gpio_callback button_cb_data;
-
-	if(!checkDivice(button.port)){
+	
+	// Configures button pin as input
+	if(!configGPIO(&button, GPIO_INPUT)){
 		return 0;
 	}
 
 	int ret;
 
-	ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
-	if (ret != 0) {
-		printk("Error %d: failed to configure %s pin %d\n",
-		       ret, button.port->name, button.pin);
-		return 0;
-	}
-
+	// Configures button pin as interrupt
 	ret = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
 	if (ret != 0) {
 		printk("Error %d: failed to configure interrupt on %s pin %d\n",
@@ -112,23 +139,22 @@ int main(void) {
 		return 0;
 	}
 
+	// Inicializes the callback for the button interrupt
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
 	gpio_add_callback(button.port, &button_cb_data);
 
-	uint8_t addr;
-	struct spi_buf tx_buf = {.buf = &addr, .len = 1};
-	struct spi_buf_set tx = {.buffers = &tx_buf, .count = 1};
+	// ---------------------------------- Pin Control ----------------------------------------------
+	static const struct gpio_dt_spec mosfet = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(mosfet), gpios, {0});
 
-	uint8_t buf[2];
-	struct spi_buf rx_buf[2] = {{.buf=&buf[0],.len=1},{.buf=&buf[1],.len=1}};
-	//struct spi_buf rx_buf = {.buf=&buf[0],.len=1};
-	struct spi_buf_set rx = {.buffers = &rx_buf, .count = ARRAY_SIZE(rx_buf)};
+	// Configures button pin as output starting inactive (in this case 0) 
+	if(!configGPIO(&mosfet, GPIO_OUTPUT_INACTIVE)){
+		return 0;
+	}
 
-	//const struct device *spi = device_get_binding("SPI_0");;
 
-	addr = 0xD0 | 0x80; //| 0x80;
-
+	// Loop
 	while(1){
+		// Sendes the tx buffer and recives in the rx buffer
 		int ret = spi_transceive_dt(&spec_bme, &tx, &rx);
 		if (ret) {
 			printk("\n\nspi_transceive_dt ret code: %d", ret);
@@ -143,6 +169,14 @@ int main(void) {
 
 		if (buf[1] == 0x60)
 			LOG_DBG("ON");
+
+		ret = gpio_pin_toggle_dt(&mosfet);
+
+		/*
+		err = gpio_pin_set_dt(&load_switch, 1);*/
+		if (ret != 0) {
+			printf("Setting GPIO pin level failed: %d\n", ret);
+		}
 
 		k_sleep(K_MSEC(500));
 	}
