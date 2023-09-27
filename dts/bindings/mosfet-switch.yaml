@@ -1,10 +1,15 @@
 # Copyright (c) 2023 Libre Solar Technologies GmbH
 # SPDX-License-Identifier: Apache-2.0
 
-description: GPIO pin to switch a power output on or off
+# A high level description of the device the binding applies to:
+description: 
+  This is a device to control the behaviure of a mosfet
 
+# Used to match a node to this binding
 compatible: "mosfet-switch"
 
+# Requirements for and descriptions of the properties that this
+# binding's nodes need to satisfy.
 properties:
   gpios:
     type: phandle-array

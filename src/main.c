@@ -28,6 +28,12 @@
 
 LOG_MODULE_REGISTER(Log_Main, LOG_LEVEL_DBG);
 
+
+// Mosfet specifications for the interrupt callback and main loop
+static const struct gpio_dt_spec mosfet = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(mosfet), gpios, {0});
+char checkMosfetOFF = 0;
+uint32_t start;
+
 /*
  * See https://www.doxygen.nl/manual/commands.html 
  * for coments
@@ -64,11 +70,22 @@ char checkDivice(const struct device *dev) {
 	return 1;
 }
 
-char configGPIO(const struct gpio_dt_spec *gpio_spec, uint32_t gpio_type) {
+/** 
+ * @fn char configGPIO(const struct gpio_dt_spec *gpio_spec, uint32_t gpio_type)
+ * @brief Recives a gpio spec type pointer and verefies if its gpio is ready to use.
+ * It also recives a gpio type to configure the gpio's behavior.
+ * 
+ * @param dgpio_spec a gpio_dt_spec type pointer.
+ * @param gpio_type a gpio_flags_t type that defines the gpio behavior
+ * 
+ * @retval 0 if the device is fails.
+ * @retval 1 if the device passed.
+ */
+char configGPIO(const struct gpio_dt_spec *gpio_spec, gpio_flags_t gpio_type) {
 	int err;
 
 	if (!gpio_is_ready_dt(gpio_spec)) {
-		printf("The load switch pin GPIO port is not ready.\n");
+		printk("The load switch pin GPIO port is not ready.\n");
 		return 0;
 	}
 
@@ -81,7 +98,6 @@ char configGPIO(const struct gpio_dt_spec *gpio_spec, uint32_t gpio_type) {
 	return 1;
 }
 
-
 /** 
  * @fn void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
  * @brief Callback function for the interrupt resolted from pressing 
@@ -93,7 +109,27 @@ char configGPIO(const struct gpio_dt_spec *gpio_spec, uint32_t gpio_type) {
  */
 void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+	int err;
+	printk("Button pressed at %u\n", k_cycle_get_32());
+
+	err = gpio_pin_set_dt(&mosfet, 1);
+	if (err != 0) {
+		printk("Setting GPIO pin level 1 failed: %d\n", err);
+		return 0;
+	}
+
+	checkMosfetOFF = 1;
+
+	printk("Mosfet turn off waiting 1 sec");
+	k_sleep(K_SECONDS(1));
+
+	err = gpio_pin_set_dt(&mosfet, 0);
+	start = k_cycle_get_32();
+	if (err != 0) {
+		printk("Setting GPIO pin level 0 failed: %d\n", err);
+		return 0;
+	}
+	printk("Mosfet turn on");
 }
 
 int main(void) {
@@ -144,17 +180,23 @@ int main(void) {
 	gpio_add_callback(button.port, &button_cb_data);
 
 	// ---------------------------------- Pin Control ----------------------------------------------
-	static const struct gpio_dt_spec mosfet = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(mosfet), gpios, {0});
-
+	// mosfet value is global for callback
 	// Configures button pin as output starting inactive (in this case 0) 
 	if(!configGPIO(&mosfet, GPIO_OUTPUT_INACTIVE)){
 		return 0;
 	}
 
+	ret = gpio_pin_set_dt(&mosfet, 0);
+	if (ret != 0) {
+		printk("Setting GPIO pin level 0 failed: %d\n", ret);
+		return 0;
+	}
 
+	printk("Waiting in loop");
+	
 	// Loop
 	while(1){
-		// Sendes the tx buffer and recives in the rx buffer
+		// Sends the tx buffer and recives in the rx buffer
 		int ret = spi_transceive_dt(&spec_bme, &tx, &rx);
 		if (ret) {
 			printk("\n\nspi_transceive_dt ret code: %d", ret);
@@ -167,18 +209,14 @@ int main(void) {
 		//printk("\n\nbuff rx(0): %x", buf[0]);
 		//printk("\nbuff rx(1): %x", buf[1]);
 
-		if (buf[1] == 0x60)
-			LOG_DBG("ON");
+		if (buf[1] == 0x60 && checkMosfetOFF){
+			int time_ms = k_cyc_to_us_ceil32(k_cycle_get_32() - start);
+			printk("Time to ON in ms %d\n", time_ms);
+			checkMosfetOFF = 0;
+		}	
 
-		ret = gpio_pin_toggle_dt(&mosfet);
-
-		/*
-		err = gpio_pin_set_dt(&load_switch, 1);*/
-		if (ret != 0) {
-			printf("Setting GPIO pin level failed: %d\n", ret);
-		}
-
-		k_sleep(K_MSEC(500));
+		//ret = gpio_pin_toggle_dt(&mosfet);
+		//k_sleep(K_MSEC(500));
 	}
 
 	return 0;
