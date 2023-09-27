@@ -107,11 +107,11 @@ char configGPIO(const struct gpio_dt_spec *gpio_spec, gpio_flags_t gpio_type) {
  * @param cb callback indicator ???
  * @param pins pin in which the interrupt was originated 
  */
-void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
+void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
 	int err;
 	printk("Button pressed at %u\n", k_cycle_get_32());
 
+	// Turns the mosfet off
 	err = gpio_pin_set_dt(&mosfet, 1);
 	if (err != 0) {
 		printk("Setting GPIO pin level 1 failed: %d\n", err);
@@ -123,12 +123,15 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t
 	printk("Mosfet turn off waiting 1 sec");
 	k_sleep(K_SECONDS(1));
 
+	// Turns the mosfet on
 	err = gpio_pin_set_dt(&mosfet, 0);
-	start = k_cycle_get_32();
 	if (err != 0) {
 		printk("Setting GPIO pin level 0 failed: %d\n", err);
 		return 0;
 	}
+	
+	// Gets kernel cycle number
+	start = k_cycle_get_32();
 	printk("Mosfet turn on");
 }
 
