@@ -31,7 +31,9 @@ LOG_MODULE_REGISTER(Log_Main, LOG_LEVEL_DBG);
 
 // Mosfet specifications for the interrupt callback and main loop
 static const struct gpio_dt_spec mosfet = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(mosfet), gpios, {0});
-char checkMosfetOFF = 0;
+const int mosfetOnValue = 1;
+char letSPIPrint = 0;
+char checkButtonPress = 0;
 uint32_t start;
 
 /*
@@ -108,31 +110,8 @@ char configGPIO(const struct gpio_dt_spec *gpio_spec, gpio_flags_t gpio_type) {
  * @param pins pin in which the interrupt was originated 
  */
 void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
-	int err;
 	printk("Button pressed at %u\n", k_cycle_get_32());
-
-	// Turns the mosfet off
-	err = gpio_pin_set_dt(&mosfet, 1);
-	if (err != 0) {
-		printk("Setting GPIO pin level 1 failed: %d\n", err);
-		return 0;
-	}
-
-	checkMosfetOFF = 1;
-
-	printk("Mosfet turn off waiting 1 sec");
-	k_sleep(K_SECONDS(1));
-
-	// Turns the mosfet on
-	err = gpio_pin_set_dt(&mosfet, 0);
-	if (err != 0) {
-		printk("Setting GPIO pin level 0 failed: %d\n", err);
-		return 0;
-	}
-	
-	// Gets kernel cycle number
-	start = k_cycle_get_32();
-	printk("Mosfet turn on");
+	checkButtonPress = 1;
 }
 
 int main(void) {
@@ -189,9 +168,9 @@ int main(void) {
 		return 0;
 	}
 
-	ret = gpio_pin_set_dt(&mosfet, 0);
+	ret = gpio_pin_set_dt(&mosfet, mosfetOnValue);
 	if (ret != 0) {
-		printk("Setting GPIO pin level 0 failed: %d\n", ret);
+		printk("Setting GPIO pin level %d failed: %d\n", mosfetOnValue, ret);
 		return 0;
 	}
 
@@ -202,7 +181,7 @@ int main(void) {
 		// Sends the tx buffer and recives in the rx buffer
 		int ret = spi_transceive_dt(&spec_bme, &tx, &rx);
 		if (ret) {
-			printk("\n\nspi_transceive_dt ret code: %d", ret);
+			printk("\n\nspi_transceive_dt ret code: %d\n", ret);
 		}
 
 		/*
@@ -212,14 +191,43 @@ int main(void) {
 		//printk("\n\nbuff rx(0): %x", buf[0]);
 		//printk("\nbuff rx(1): %x", buf[1]);
 
-		if (buf[1] == 0x60 && checkMosfetOFF){
-			int time_ms = k_cyc_to_us_ceil32(k_cycle_get_32() - start);
-			printk("Time to ON in ms %d\n", time_ms);
-			checkMosfetOFF = 0;
-		}	
+		if (buf[1] == 0x60 && letSPIPrint){
+			int time_us = k_cyc_to_us_ceil32(k_cycle_get_32() - start);
+			printk("Time to ON in us %d\n", time_us);
+			letSPIPrint = 0;
+		} else if(letSPIPrint){
+			printk("buff val: %x\n", buf[1]);
+		}
 
-		//ret = gpio_pin_toggle_dt(&mosfet);
-		//k_sleep(K_MSEC(500));
+		if (checkButtonPress){
+			int err;
+			printk("Button pressed at %u\n", k_cycle_get_32());
+
+			// Turns the mosfet off
+			err = gpio_pin_set_dt(&mosfet, !mosfetOnValue);
+			if (err != 0) {
+				printk("Setting GPIO pin level %d failed: %d\n", !mosfetOnValue, err);
+				return 0;
+			}
+
+			letSPIPrint = 1;
+
+			printk("Mosfet turn off waiting 2 sec\n");
+			k_sleep(K_SECONDS(2));
+
+			// Turns the mosfet on
+			err = gpio_pin_set_dt(&mosfet, mosfetOnValue);
+			if (err != 0) {
+				printk("Setting GPIO pin level %d failed: %d\n", mosfetOnValue, err);
+				return 0;
+			}
+
+			// Gets kernel cycle number
+			start = k_cycle_get_32();
+			printk("Mosfet turn on\n");
+
+			checkButtonPress = 0;
+		}	
 	}
 
 	return 0;
