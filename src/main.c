@@ -238,8 +238,6 @@ int main(void) {
 		}*/
 
 		if (checkButtonPress){
-			printk("Button pressed at %u\n", k_cycle_get_32());
-
 			// Turns the mosfet off
 			err = gpio_pin_set_dt(&mosfet, !mosfetOnValue);
 			if (err != 0) {
